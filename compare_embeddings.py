@@ -21,6 +21,7 @@ def batch_embeddings(embeddings_generator, batch_size=None):
     """
     `embeddings_generator` is a generator that yields dictionaries with `"metadata"` and `"embedding"` keys; 
     it is assumed that the embeddings are already in numpy array format.
+    metadata is a dictionary from which we are interested in the global_example_index key, so we can use it to match the embeddings with the original examples.
 
     Yield batches of metadata and embeddings from the generator.
     If batch_size is None, yields everything as a single batch.
@@ -56,7 +57,7 @@ def compare_embeddings(large_embeddings_batches, query_embeddings, top_k=1):
     query_embeddings_torch = torch.from_numpy(query_embeddings).to(device="cuda" if torch.cuda.is_available() else "cpu")
     top_indices_accumulator = [] #accumulates the top 1 indices for each query embedding in each batch
     top_cosine_similarities_accumulator = [] #accumulates the top 1 cosine similarities for each query embedding in each batch
-    batch_index_offset_counter = 0
+    
     for large_metadata_batch, large_embeddings_batch in large_embeddings_batches:
         emb_batch_torch = torch.from_numpy(large_embeddings_batch).to(query_embeddings_torch.device)
         cosine_similarities = cosine_similarity_normalized(query_embeddings_torch, emb_batch_torch)
@@ -66,9 +67,9 @@ def compare_embeddings(large_embeddings_batches, query_embeddings, top_k=1):
             top_cosine_similarities, top_indices = torch.topk(cosine_similarities, k=cosine_similarities.shape[1], dim=1, largest=True, sorted=True)
         else:
             top_cosine_similarities, top_indices = torch.topk(cosine_similarities, k=top_k, dim=1, largest=True, sorted=True)
-        top_indices_accumulator.append((top_indices + batch_index_offset_counter).cpu())
+        global_example_indices = top_indices.cpu().clone().apply_(lambda x: large_metadata_batch[x]["global_example_index"])
+        top_indices_accumulator.append(global_example_indices)
         top_cosine_similarities_accumulator.append(top_cosine_similarities.cpu())
-        batch_index_offset_counter += len(large_embeddings_batch)
     #Now we take top-1 across the per-batch maxima, note! We are on CPU now!
     top_indices_accumulator = torch.cat(top_indices_accumulator, dim=1)
     top_cosine_similarities_accumulator = torch.cat(top_cosine_similarities_accumulator, dim=1)
