@@ -1,0 +1,92 @@
+# python3 compare_embeddings_on_the_fly.py --large embeddings/multilingual-e5-large-instruct/emb_mteb_hotpotqa_corpus.0 --queries text_queries.txt --batch 20 --top-k 3 --dataset-jsonl datasets/mteb_hotpotqa_corpus.jsonl --model intfloat/multilingual-e5-large-instruct
+
+
+import argparse
+import compare_embeddings as ce
+import tqdm
+import json
+from sentence_transformers import SentenceTransformer
+
+def build_query_embeddings(model_name, query_file_name, args):
+    model = SentenceTransformer(model_name)
+    with open(query_file_name, "rt") as f:
+        queries=[q for q in f.readlines() if q.strip()]
+    embeddings = model.encode(queries, convert_to_numpy=True, show_progress_bar=True, batch_size=len(queries))
+    return queries,embeddings
+
+def load_texts_from_jsonl(file_name):
+    texts = []
+    with open(file_name, "rt") as f:
+        for line in tqdm.tqdm(f, desc="Loading texts from JSONL"):
+            line=line.strip()
+            if not line:
+                continue
+            text = json.loads(line)["text"]
+            texts.append(text)
+    return texts
+
+
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Compare query text against large embeddings on the fly",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        required=True,
+        help="SentenceTransformer model name for encoding queries.",
+    )
+    parser.add_argument(
+        "--large-embeddings",
+        type=str,
+        required=True,
+        help="Path prefix for large embeddings (as in compare_embeddings).",
+    )
+    parser.add_argument(
+        "--queries",
+        type=str,
+        required=True,
+        help="Text file with one query per line.",
+    )
+    parser.add_argument(
+        "--dataset-jsonl",
+        type=str,
+        required=True,
+        help="JSONL with the original dataset of large embeddings (for lookups).",
+    )
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=1,
+        help="Number of nearest neighbors to return.",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=200,
+        help="Batch size for comparing embeddings",
+    )
+    args = parser.parse_args()
+    
+    # Build query embeddings on the fly
+    query_texts, query_embeddings = build_query_embeddings(args.model, args.queries, args)
+    # Load texts from JSONL for lookups
+    texts = load_texts_from_jsonl(args.dataset_jsonl)
+    # Load large embeddings in batches for comparison
+    large_embeddings_generator = ce.yield_embeddings(args.large_embeddings)
+    large_embeddings_batches = ce.batch_embeddings(large_embeddings_generator, args.batch_size)
+    # Compare query embeddings against large embeddings
+    all_top_indices, all_top_cosine_similarities = ce.compare_embeddings(large_embeddings_batches, query_embeddings, args.top_k)
+    
+    # Print results
+    for query_text, top_indices, top_cosine_similarities in zip(query_texts, all_top_indices, all_top_cosine_similarities):
+        print(f"Query: {query_text}")
+        for top_index, top_cosine_similarity in zip(top_indices, top_cosine_similarities):
+            print(f"    Top index: {top_index}")
+            print(f"    Top cosine similarity: {top_cosine_similarity}")
+            print(f"    Text: {texts[top_index][:200]}")
+            print("-"*100)
+            print()
