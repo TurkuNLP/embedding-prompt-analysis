@@ -47,10 +47,11 @@ def cosine_similarity_normalized(tensor1, tensor2):
     similarity_matrix = torch.matmul(tensor1_normalized, tensor2_normalized.T)
     return similarity_matrix
 
-def compare_embeddings(large_embeddings_batches, query_embeddings):
+def compare_embeddings(large_embeddings_batches, query_embeddings, top_k=1):
     """
     `large_embeddings_batches` is a generator that yields batches of metadata and embeddings from the large set of embeddings;
     `query_embeddings` is a numpy array of query embeddings.
+    `top_k` – number of nearest neighbors to return; None means consider/return all.
     """
     query_embeddings_torch = torch.from_numpy(query_embeddings).to(device="cuda" if torch.cuda.is_available() else "cpu")
     top_indices_accumulator = [] #accumulates the top 1 indices for each query embedding in each batch
@@ -61,15 +62,22 @@ def compare_embeddings(large_embeddings_batches, query_embeddings):
         cosine_similarities = cosine_similarity_normalized(query_embeddings_torch, emb_batch_torch)
         #cosine_similarities is a matrix of shape (query_embeddings.shape[0], large_embeddings_batch.shape[0])
         #find the indices of the top 1 cosine similarities for each query embedding
-        top_cosine_similarities, top_indices = torch.topk(cosine_similarities, k=1, dim=1)
-        top_indices_accumulator.append(top_indices + batch_index_offset_counter)
-        top_cosine_similarities_accumulator.append(top_cosine_similarities)
+        if top_k is None:
+            top_cosine_similarities, top_indices = torch.topk(cosine_similarities, k=cosine_similarities.shape[1], dim=1, largest=True, sorted=True)
+        else:
+            top_cosine_similarities, top_indices = torch.topk(cosine_similarities, k=top_k, dim=1, largest=True, sorted=True)
+        top_indices_accumulator.append((top_indices + batch_index_offset_counter).cpu())
+        top_cosine_similarities_accumulator.append(top_cosine_similarities.cpu())
         batch_index_offset_counter += len(large_embeddings_batch)
-    #Now we take top-1 across the per-batch maxima
+    #Now we take top-1 across the per-batch maxima, note! We are on CPU now!
     top_indices_accumulator = torch.cat(top_indices_accumulator, dim=1)
     top_cosine_similarities_accumulator = torch.cat(top_cosine_similarities_accumulator, dim=1)
-    top_cosine_similarities_global,top_indices_into_accumulator = torch.topk(top_cosine_similarities_accumulator, k=1, dim=1)
-    top_indices_global = top_indices_accumulator.gather(1, top_indices_into_accumulator)
+    if top_k is None:
+        top_cosine_similarities_global,top_indices_into_accumulator = torch.topk(top_cosine_similarities_accumulator, k=top_cosine_similarities_accumulator.shape[1], dim=1, largest=True, sorted=True)
+        top_indices_global = top_indices_accumulator.gather(1, top_indices_into_accumulator)
+    else:
+        top_cosine_similarities_global,top_indices_into_accumulator = torch.topk(top_cosine_similarities_accumulator, k=top_k, dim=1, largest=True, sorted=True)
+        top_indices_global = top_indices_accumulator.gather(1, top_indices_into_accumulator)
     return top_indices_global, top_cosine_similarities_global
 
 if __name__=="__main__":
@@ -96,7 +104,15 @@ if __name__=="__main__":
         default=200,
         help="Batch size for comparing embeddings"
     )
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=1,
+        help="Number of nearest neighbors to return. Use -1 for all."
+    )
     args = parser.parse_args()
+    if args.top_k == -1:
+        args.top_k = None
 
     # File-based comparison
     # 1) Load the query embeddings
@@ -106,7 +122,7 @@ if __name__=="__main__":
     large_embeddings_generator = yield_embeddings(args.large_embeddings)
     large_embeddings_batches = batch_embeddings(large_embeddings_generator, args.batch_size)
     # 3) Compare the embeddings
-    top_indices, top_cosine_similarities = compare_embeddings(large_embeddings_batches, query_embeddings)
+    top_indices, top_cosine_similarities = compare_embeddings(large_embeddings_batches, query_embeddings, args.top_k)
     
     print("Shape of top_indices:", top_indices.shape, file=sys.stderr, flush=True)
     print("Shape of top_cosine_similarities:", top_cosine_similarities.shape, file=sys.stderr, flush=True)
