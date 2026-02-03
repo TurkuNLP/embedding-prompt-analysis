@@ -6,11 +6,18 @@ import compare_embeddings as ce
 import tqdm
 import json
 from sentence_transformers import SentenceTransformer
+from prompts import get_prompt
 
 def build_query_embeddings(model_name, query_file_name, args):
     model = SentenceTransformer(model_name)
     with open(query_file_name, "rt") as f:
-        queries=[q for q in f.readlines() if q.strip()]
+        if query_file_name.endswith(".jsonl"):
+            queries = [json.loads(q)["text"] for q in f.readlines() if q.strip()]
+        else:
+            queries=[q for q in f.readlines() if q.strip()]
+    if args.use_prompt:
+        prompt = get_prompt(model_name, args.use_prompt)
+        queries = [prompt + q for q in queries]
     embeddings = model.encode(queries, convert_to_numpy=True, show_progress_bar=True, batch_size=len(queries))
     return queries,embeddings
 
@@ -64,6 +71,12 @@ if __name__ == "__main__":
         help="Number of nearest neighbors to return.",
     )
     parser.add_argument(
+        "--use-prompt",
+        type=str,
+        default=None,
+        help="Use prompt for query text (options: hotpotqa, nq, quora) Default: None.",
+    )
+    parser.add_argument(
         "--batch-size",
         type=int,
         default=200,
@@ -73,6 +86,7 @@ if __name__ == "__main__":
     
     # Build query embeddings on the fly
     query_texts, query_embeddings = build_query_embeddings(args.model, args.queries, args)
+    print(f"Shape of query_embeddings: {query_embeddings.shape}")
     # Load texts from JSONL for lookups
     texts = load_texts_from_jsonl(args.dataset_jsonl)
     # Load large embeddings in batches for comparison
