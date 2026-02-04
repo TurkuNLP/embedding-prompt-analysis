@@ -26,12 +26,12 @@ mkdir -p embeddings/Qwen3-Embedding-0.6B
 ### mteb_hotpotqa_corpus ### --- I already have this one for this model
 for dataset in  mteb_nq_corpus mteb_quora_corpus
 do
-    python3 compute_embeddings.py --data datasets/$dataset.jsonl --output embeddings/multilingual-e5-large-instruct/emb_$dataset --batch 200 --shard-total $2 --shard-index $1 --model intfloat/multilingual-e5-large-instruct 
+    python3 compute_embeddings.py --data datasets/$dataset.jsonl --output embeddings/multilingual-e5-large-instruct/emb_$dataset --batch 50 --shard-total $2 --shard-index $1 --model intfloat/multilingual-e5-large-instruct > logs/emb_$dataset.$1.e5.log 2>&1
 done
 
 # Qwen/Qwen3-Embedding-0.6B
 
 for dataset in mteb_hotpotqa_corpus mteb_nq_corpus mteb_quora_corpus
 do
-    python3 compute_embeddings.py --data datasets/$dataset.jsonl --output embeddings/Qwen3-Embedding-0.6B/emb_$dataset --batch 200 --shard-total $2 --shard-index $1 --model Qwen/Qwen3-Embedding-0.6B 
+    python3 compute_embeddings.py --data datasets/$dataset.jsonl --output embeddings/Qwen3-Embedding-0.6B/emb_$dataset --batch 50 --shard-total $2 --shard-index $1 --model Qwen/Qwen3-Embedding-0.6B > logs/emb_$dataset.$1.qwen.log 2>&1
 done
