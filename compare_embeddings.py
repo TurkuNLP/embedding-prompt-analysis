@@ -5,17 +5,28 @@ import argparse
 import numpy as np
 import torch
 import sys
+import io
 
-def yield_embeddings(file_prefix):
-    with open(f"{file_prefix}.embeddings.pkl", "rb") as f_emb,\
-        open(f"{file_prefix}.examples.jsonl", "rt") as f_meta:
-        while True:
-            try:
-                embedding = pickle.load(f_emb)
-                metadata = json.loads(f_meta.readline())
-            except EOFError:
-                break
-            yield {"metadata": metadata, "embedding": embedding}
+def yield_embeddings(pkl_files, preload_pkl_file_to_memory=False):
+    for pkl_file in pkl_files:
+        if preload_pkl_file_to_memory:
+            #print(f"Preloading {pkl_file} to memory", file=sys.stderr, flush=True)
+            f=open(pkl_file, "rb")
+            emb_pkl=f.read()
+            f.close()
+            f_emb = io.BytesIO(emb_pkl)
+            #print(f"Done. Preloaded {pkl_file} to memory", file=sys.stderr, flush=True)
+        else:
+            f_emb = open(pkl_file, "rb")
+            
+        with open(f"{pkl_file.replace(".embeddings.pkl", ".examples.jsonl")}", "rt") as f_meta:
+            while True:
+                try:
+                    embedding = pickle.load(f_emb)
+                    metadata = json.loads(f_meta.readline())
+                except EOFError:
+                    break
+                yield {"metadata": metadata, "embedding": embedding}
 
 def batch_embeddings(embeddings_generator, batch_size=None):
     """
@@ -54,7 +65,12 @@ def compare_embeddings(large_embeddings_batches, query_embeddings, top_k=1):
     `query_embeddings` is a numpy array of query embeddings.
     `top_k` – number of nearest neighbors to return; None means consider/return all.
     """
-    query_embeddings_torch = torch.from_numpy(query_embeddings).to(device="cuda" if torch.cuda.is_available() else "cpu")
+    if query_embeddings.__class__ != torch.Tensor:
+        query_embeddings_torch = torch.from_numpy(query_embeddings)
+    else:
+        query_embeddings_torch = query_embeddings
+    
+    query_embeddings_torch = query_embeddings_torch.to(device="cuda" if torch.cuda.is_available() else "cpu")
     top_indices_accumulator = [] #accumulates the top 1 indices for each query embedding in each batch
     top_cosine_similarities_accumulator = [] #accumulates the top 1 cosine similarities for each query embedding in each batch
     
@@ -81,53 +97,59 @@ def compare_embeddings(large_embeddings_batches, query_embeddings, top_k=1):
         top_indices_global = top_indices_accumulator.gather(1, top_indices_into_accumulator)
     return top_indices_global, top_cosine_similarities_global
 
-if __name__=="__main__":
-    parser = argparse.ArgumentParser(
-        description="Compare embeddings of two datasets",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
-    )
 
-    parser.add_argument(
-        "--large-embeddings",
-        type=str,
-        required=True,
-        help="Path prefix for the large set of embeddings within which we seek the nearest neighbors. Will be loaded in batches."
-    )
-    parser.add_argument(
-        "--query-embeddings",
-        type=str,
-        required=True,
-        help="Path prefix for the set of embeddings which acts as a query. Will be loaded fully into GPU memory."
-    )
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=200,
-        help="Batch size for comparing embeddings"
-    )
-    parser.add_argument(
-        "--top-k",
-        type=int,
-        default=1,
-        help="Number of nearest neighbors to return. Use -1 for all."
-    )
-    args = parser.parse_args()
-    if args.top_k == -1:
-        args.top_k = None
+###############################
+####### COMMENTED OUT; I ONLY MAINTAIN THE _on_the_fly.py FILE NOW FOR RUNS
 
-    # File-based comparison
-    # 1) Load the query embeddings
-    query_examples = list(yield_embeddings(args.query_embeddings))
-    query_embeddings = np.vstack([example["embedding"] for example in query_examples])
-    # 2) Load the large embeddings in batches
-    large_embeddings_generator = yield_embeddings(args.large_embeddings)
-    large_embeddings_batches = batch_embeddings(large_embeddings_generator, args.batch_size)
-    # 3) Compare the embeddings
-    top_indices, top_cosine_similarities = compare_embeddings(large_embeddings_batches, query_embeddings, args.top_k)
+# if __name__=="__main__":
+#     parser = argparse.ArgumentParser(
+#         description="Compare embeddings of two datasets",
+#         formatter_class=argparse.ArgumentDefaultsHelpFormatter
+#     )
+
+#     parser.add_argument(
+#         "--large-embeddings",
+#         type=str,
+#         required=True,
+#         nargs="+",
+#         help="Paths to all large embeddings .embeddings.pkl files (assuming that the corresponding .examples.jsonl files are in the same directory). Will be loaded in batches."
+#     )
+#     parser.add_argument(
+#         "--query-embeddings",
+#         type=str,
+#         required=True,
+#         help="Path prefix for the set of embeddings which acts as a query. Will be loaded fully into GPU memory."
+#     )
+#     parser.add_argument(
+#         "--batch-size",
+#         type=int,
+#         default=200,
+#         help="Batch size for comparing embeddings"
+#     )
+#     parser.add_argument(
+#         "--top-k",
+#         type=int,
+#         default=1,
+#         help="Number of nearest neighbors to return. Use -1 for all."
+#     )
+#     args = parser.parse_args()
+#     if args.top_k == -1:
+#         args.top_k = None
+
+#     # File-based comparison
+#     # 1) Load the query embeddings
+#     query_examples = list(yield_embeddings(args.query_embeddings))
+#     query_embeddings = np.vstack([example["embedding"] for example in query_examples])
+#     query_embeddings_torch = torch.from_numpy(query_embeddings).to(device="cuda" if torch.cuda.is_available() else "cpu")
+#     # 2) Load the large embeddings in batches
+#     large_embeddings_generator = tqdm.tqdm(yield_embeddings(args.large_embeddings), desc=f"Loading large embeddings from disk")
+#     large_embeddings_batches = batch_embeddings(large_embeddings_generator, args.batch_size)
+#     # 3) Compare the embeddings
+#     top_indices, top_cosine_similarities = compare_embeddings(large_embeddings_batches, query_embeddings_torch, args.top_k)
     
-    print("Shape of top_indices:", top_indices.shape, file=sys.stderr, flush=True)
-    print("Shape of top_cosine_similarities:", top_cosine_similarities.shape, file=sys.stderr, flush=True)
-    print("First 10 top_indices (indices of nearest neighbors in large_embeddings):", file=sys.stderr, flush=True)
-    print(top_indices[:10], file=sys.stderr, flush=True)
-    print("First 10 top_cosine_similarities (cosine similarities for each nearest neighbor):", file=sys.stderr, flush=True)
-    print(top_cosine_similarities[:10], file=sys.stderr, flush=True)
+#     print("Shape of top_indices:", top_indices.shape, file=sys.stderr, flush=True)
+#     print("Shape of top_cosine_similarities:", top_cosine_similarities.shape, file=sys.stderr, flush=True)
+#     print("First 10 top_indices (indices of nearest neighbors in large_embeddings):", file=sys.stderr, flush=True)
+#     print(top_indices[:10], file=sys.stderr, flush=True)
+#     print("First 10 top_cosine_similarities (cosine similarities for each nearest neighbor):", file=sys.stderr, flush=True)
+#     print(top_cosine_similarities[:10], file=sys.stderr, flush=True)
