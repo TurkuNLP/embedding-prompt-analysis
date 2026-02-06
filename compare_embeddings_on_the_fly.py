@@ -8,6 +8,7 @@ import json
 from sentence_transformers import SentenceTransformer
 from prompts import get_prompt
 import torch
+import sys
 
 def build_query_embeddings(model_name, query_file_name, args):
     model = SentenceTransformer(model_name)
@@ -18,6 +19,7 @@ def build_query_embeddings(model_name, query_file_name, args):
             queries=[q for q in f.readlines() if q.strip()]
     if args.use_prompt:
         prompt = get_prompt(model_name, args.use_prompt)
+        print(f"Using query prompt: {prompt}", file=sys.stderr, flush=True)
         queries = [prompt + q for q in queries]
     embeddings = model.encode(queries, convert_to_numpy=True, show_progress_bar=True, batch_size=args.emb_batch_size)
     return queries,embeddings
@@ -33,7 +35,20 @@ def load_texts_from_jsonl(file_name):
             texts.append(text)
     return texts
 
-if __name__ == "__main__":
+def run_comparison(query_embeddings, args):
+
+    query_embeddings_torch = torch.from_numpy(query_embeddings).to(device="cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Shape of query_embeddings: {query_embeddings_torch.shape} on device {query_embeddings_torch.device}", file=sys.stderr, flush=True)
+    # Load large embeddings in batches for comparison
+    large_embeddings_generator = tqdm.tqdm(ce.yield_embeddings(args.large_embeddings,\
+        args.preload_pkl_file_to_memory), desc=f"Loading large embeddings from disk")
+    large_embeddings_batches = ce.batch_embeddings(large_embeddings_generator, args.batch_size)
+    # Compare query embeddings against large embeddings
+    all_top_indices, all_top_cosine_similarities = ce.compare_embeddings(tqdm.tqdm(large_embeddings_batches, desc=f"Comparing embeddings batches of {args.batch_size} at a time"), query_embeddings_torch, args.top_k)
+
+    return all_top_indices, all_top_cosine_similarities
+
+def create_parser():
     parser = argparse.ArgumentParser(
         description="Compare query text against large embeddings on the fly",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -91,22 +106,24 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
         help="Preload the .embeddings.pkl files to memory (one at a time). Do this if you are on puhti/mahti/lumi LUSTRE system.")
+
     args = parser.parse_args()
     if args.top_k == -1:
         args.top_k = None
+    return args
+
+if __name__ == "__main__":
     
+    args = create_parser()
+
     # Build query embeddings on the fly
     query_texts, query_embeddings = build_query_embeddings(args.model, args.queries, args)
-    query_embeddings_torch = torch.from_numpy(query_embeddings).to(device="cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Shape of query_embeddings: {query_embeddings_torch.shape} on device {query_embeddings_torch.device}", file=sys.stderr, flush=True)
+    
     # Load texts from JSONL for lookups
     texts = load_texts_from_jsonl(args.dataset_jsonl)
-    # Load large embeddings in batches for comparison
-    large_embeddings_generator = tqdm.tqdm(ce.yield_embeddings(args.large_embeddings,\
-        args.preload_pkl_file_to_memory), desc=f"Loading large embeddings from disk")
-    large_embeddings_batches = ce.batch_embeddings(large_embeddings_generator, args.batch_size)
+    
     # Compare query embeddings against large embeddings
-    all_top_indices, all_top_cosine_similarities = ce.compare_embeddings(tqdm.tqdm(large_embeddings_batches, desc=f"Comparing embeddings batches of {args.batch_size} at a time"), query_embeddings_torch, args.top_k)
+    all_top_indices, all_top_cosine_similarities = run_comparison(query_embeddings, args)
     
     # Print results
     for query_text, top_indices, top_cosine_similarities in zip(query_texts, all_top_indices, all_top_cosine_similarities):
