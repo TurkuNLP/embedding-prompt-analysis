@@ -6,24 +6,16 @@ from sklearn.metrics.pairwise import cosine_similarity
 import json
 import os
 from prompts import get_prompt
-
+import sys
 
 
 class ModelWrapper(object):
     def __init__(self, model_name, cache_dir):
         self.cache_dir = cache_dir
-        if model_name == "e5":
-            self.model_name = "e5"
-            print("Loading model: intfloat/multilingual-e5-large-instruct")
-            self.model = SentenceTransformer("intfloat/multilingual-e5-large-instruct", cache_folder=self.cache_dir)
-            self.encode_fn = self.model.encode
-        elif model_name == "qwen3":
-            self.model_name = "qwen3"
-            print("Loading model: Qwen/Qwen3-Embedding-0.6B")
-            self.model = SentenceTransformer("Qwen/Qwen3-Embedding-0.6B", cache_folder=self.cache_dir)
-            self.encode_fn = self.model.encode
-        else:
-            raise ValueError(f"Model {model_name} not supported")
+        self.model_name = model_name
+        print("Loading model:", model_name, file=sys.stderr, flush=True)
+        self.model = SentenceTransformer(model_name, cache_folder=self.cache_dir)
+        self.encode_fn = self.model.encode
 
 
     def embed_texts(self, texts, prompt=None):
@@ -57,7 +49,6 @@ class DataWrappper(object):
         print(f"First example: {self.pairs[0]}")
 
 
-
 def make_plot(array, file_name):
 
     # create directory if it doesn't exist
@@ -70,13 +61,18 @@ def make_plot(array, file_name):
 
     plt.figure(figsize=(15, 6))
     plt.vlines(dimension_indices, 0, array, colors='blue', lw=0.7, alpha=0.7)
-    plt.title('Delta Similarity for Each Example')
-    plt.xlabel('Example Index')
-    plt.ylabel('Delta Similarity')
+    plt.title('Delta Similarity for Each Example', fontsize=18)
+    plt.xlabel('Example Index', fontsize=16)
+    plt.ylabel('Delta Similarity', fontsize=16)
+    plt.ylim(-0.30, 0.30)  # Fix y-axis limits as requested
     plt.grid(True, linestyle='--', alpha=0.7)
-    plt.savefig(file_path)
+    plt.xticks(fontsize=14)
+    plt.yticks(fontsize=14)
+    plt.tight_layout(pad=0)
+    plt.savefig(file_path, bbox_inches='tight', pad_inches=0)
     plt.close()
     print("Saved plot to", file_path)
+
 
 
 def get_pairwise_similarities(model, embeddings1, embeddings2):
@@ -101,7 +97,7 @@ def plot_sim_difference(model, data):
     print(f"Positive difference: {np.sum(np.array(differences) > 0)}")
     print(f"Negative difference: {np.sum(np.array(differences) < 0)}")
 
-    make_plot(differences, f"{model.model_name}_{data.dataset_name}_sim_difference.png")
+    make_plot(differences, f"{model.model_name.split('/')[-1]}_{data.dataset_name.split('/')[-1]}_sim_difference.png")
 
 def main(args):
 
@@ -114,7 +110,7 @@ if __name__ == "__main__":
 
     # argparser for model, dataset, and cache_dir
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, choices=["e5", "qwen3"])
+    parser.add_argument("--model", type=str, choices=["intfloat/multilingual-e5-large-instruct", "Qwen/Qwen3-Embedding-0.6B", "KaLM-Embedding/KaLM-embedding-multilingual-mini-instruct-v2.5"])
     parser.add_argument("--dataset", type=str, required=True, choices=["hotpotqa", "nq", "quora"])
     parser.add_argument("--corpus", type=str, required=True)
     parser.add_argument("--queries", type=str, required=True)
