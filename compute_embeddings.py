@@ -8,6 +8,8 @@ from tqdm import tqdm
 import transformers
 import json
 import gc
+import gzip
+
 
 def load_model(args):
     model = SentenceTransformer(args.model_name, trust_remote_code=True)
@@ -25,6 +27,7 @@ def stream_jsonl_dataset(path, args):
     )
 
     batch = []
+    prompt = None
     for example_index, example in enumerate(dataset):
         if example_index % args.shard_total != args.shard_index:
             continue
@@ -32,19 +35,27 @@ def stream_jsonl_dataset(path, args):
         if args.max_chars_per_example is not None:
             example[args.field_to_encode] = example[args.field_to_encode][:args.max_chars_per_example]
         batch.append(example)
+        if args.prompt_field:
+            if prompt is not None:
+                assert example[args.prompt_field] == prompt
+            else:
+                prompt = example[args.prompt_field]
         if len(batch) == args.batch_size:
-            yield batch
+            yield batch, prompt
             batch = []
     else:
         if batch:
-            yield batch
+            yield batch, prompt
 
 def embed_dataset(model, stream_dataset, args):
     field_to_encode = args.field_to_encode
-    metadata_list = open(f"{args.output_path_prefix}.{args.shard_index}.examples.jsonl", "wt")
+    if args.dataset.endswith(".gz"):
+        metadata_list = gzip.open(f"{args.output_path_prefix}.{args.shard_index}.examples.jsonl.gz", "wt")
+    else:
+        metadata_list = open(f"{args.output_path_prefix}.{args.shard_index}.examples.jsonl", "wt")
     embeddings_file = open(f"{args.output_path_prefix}.{args.shard_index}.embeddings.pkl", "wb")
-    for batch_index, batch in tqdm(enumerate(stream_dataset), desc="Embedding dataset", file=sys.stderr):
-        embeddings = model.encode([example[field_to_encode] for example in batch], convert_to_numpy=True, show_progress_bar=True, batch_size=len(batch))
+    for batch_index, (batch, prompt) in tqdm(enumerate(stream_dataset), desc="Embedding dataset", file=sys.stderr):
+        embeddings = model.encode([example[field_to_encode] for example in batch], prompt=prompt, convert_to_numpy=True, show_progress_bar=True, batch_size=len(batch))
         for embedding, example in zip(embeddings, batch, strict=True):
             pickle.dump(embedding, embeddings_file)
             metadata={"global_example_index": example["global_example_index"]} #this is what to store in the metadata file, adjust as needed
@@ -109,6 +120,12 @@ if __name__ == "__main__":
             help="Field of the examples to encode."
         )
         parser.add_argument(
+            "--prompt-field",
+            type=str,
+            default=None,
+            help="Field where to take prompt, default: None (no prompt added)."
+        )
+        parser.add_argument(
             "--max-chars-per-example",
             type=int,
             default=None,
@@ -123,4 +140,5 @@ if __name__ == "__main__":
     print("Loading dataset...", file=sys.stderr, flush=True)
     stream_dataset = stream_jsonl_dataset(args.dataset, args)
     print("Embedding dataset...", file=sys.stderr, flush=True)
+    print(f"Using prompt from field: {args.prompt_field}", file=sys.stderr, flush=True)
     embed_dataset(model, stream_dataset, args)
