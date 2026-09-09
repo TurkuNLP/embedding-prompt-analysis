@@ -261,7 +261,7 @@ if __name__ == "__main__":
 # PROMPTS
 
 # QA
-# "Given a question, retrieve Wikipedia passages that answer the question"
+# "Given a question, retrieve Wikipedia passages that answer the question."
 
 # TATOEBA
 # "Retrieve a [LANG] translation."
@@ -270,7 +270,7 @@ if __name__ == "__main__":
 # EXAMPLES
 
 # Tatoeba
-# python eval_retrieve_eval.py --eval_file tatoeba-mteb/tatoeba_test_fin-eng.json --query_field "query" --target_field "target" --prompt "Retrieve a Finnish translation."
+# python eval_retrieve.py --eval_file tatoeba-mteb/tatoeba_test_fin-eng.json --query_field "query" --target_field "target" --prompt "Retrieve a Finnish translation."
 
 # SQuAD
-# python eval_retrieve.py --eval_file squad_v1.1/train-splits/train-dev.json --query_field "question" --target_field "answer_paragraph" --prompt "Given a question, retrieve Wikipedia passages that answer the question" --random-distractors squad_v1.1/train-splits/train-test.json
+# python eval_retrieve.py --eval_file squad_v1.1/train-splits/train-dev.json --query_field "question" --target_field "answer_paragraph" --prompt "Given a question, retrieve Wikipedia passages that answer the question." --random-distractors squad_v1.1/train-splits/train-test.json
